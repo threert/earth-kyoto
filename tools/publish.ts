@@ -73,6 +73,6 @@ if (!args.includes("--no-register")) {
     return p.stdout.toString();
   };
   const refreshed = await call("POST", `/places/${REPO}/${manifest.id}/refresh`);
-  if (/"error"/.test(refreshed) && /404|not registered|no such/i.test(refreshed)) console.log(await call("POST", "/places", { repo: REPO }));
+  if (/"error"/.test(refreshed) && /404|not registered|no such|no place/i.test(refreshed)) console.log(await call("POST", "/places", { repo: REPO }));
   else console.log(refreshed.slice(0, 400));
 }
