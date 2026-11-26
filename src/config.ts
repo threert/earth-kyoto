@@ -8,6 +8,9 @@ export async function terrainGen(): Promise<string> {
   return JSON.parse(p.stdout.toString()).gen;
 }
 
+/** The place's anchor: its frame (east-up-south here, on the ellipsoid) is the tiles' frame. Shijō Karasuma. */
+export const ANCHOR = { lat: 35.0, lon: 135.76 };
+
 /** The built-up basin and the near slopes around it, [lat, lon], counter-clockwise from the north. */
 export const BOUNDS: [number, number][] = [
   [35.0690, 135.7350], [35.0600, 135.7240], [35.0460, 135.7140], [35.0360, 135.6960], [35.0220, 135.6700],
@@ -21,18 +24,19 @@ export const BOUNDS: [number, number][] = [
  * surface reflects. `surface` names what a host may add (the app: ThreeRT's SurfaceMaterial / facadeWindows; the web:
  * its own shader or nothing): uv is in metres (walls: along, up; ground: east, north).
  */
-export const MATERIALS: Record<string, { roughness: number; metalness?: number; surface?: Record<string, unknown>; note?: string }> = {
+export const MATERIALS: Record<string, { roughness: number; metalness?: number; doubleSided?: boolean; surface?: Record<string, unknown>; note?: string }> = {
   wall: { roughness: 0.85, note: "plaster, siding, painted walls" },
   facade: { roughness: 0.7, surface: { windows: { floorHeight: 3.3, bayWidth: 3.6, windowWidth: 0.55, windowHeight: 0.55, groundHeight: 4.0 } }, note: "walls of flats and offices: windows by storey (uv metres)" },
-  wood: { roughness: 0.75, note: "dark timber of temples and townhouses" },
-  lacquer: { roughness: 0.4, note: "vermilion of shrines and pagodas" },
+  wood: { doubleSided: true, roughness: 0.75, note: "dark timber of temples and townhouses" },
+  lacquer: { doubleSided: true, roughness: 0.4, note: "vermilion of shrines and pagodas" },
   paint: { roughness: 0.35, note: "Kyoto Tower" },
   glass: { roughness: 0.08, metalness: 0.6, note: "the tower's deck" },
-  "roof-tile": { roughness: 0.42, metalness: 0.12, note: "kawara (smoked clay tiles, a silvery sheen)" },
-  "roof-metal": { roughness: 0.35, metalness: 0.55, note: "sheet steel, galvalume" },
-  "roof-copper": { roughness: 0.55, metalness: 0.25, note: "green copper" },
-  "roof-bark": { roughness: 0.95, note: "cypress bark (hiwadabuki)" },
+  "roof-tile": { doubleSided: true, roughness: 0.42, metalness: 0.12, note: "kawara (smoked clay tiles, a silvery sheen)" },
+  "roof-metal": { doubleSided: true, roughness: 0.35, metalness: 0.55, note: "sheet steel, galvalume" },
+  "roof-copper": { doubleSided: true, roughness: 0.55, metalness: 0.25, note: "green copper" },
+  "roof-bark": { doubleSided: true, roughness: 0.95, note: "cypress bark (hiwadabuki)" },
   "roof-flat": { roughness: 0.9, note: "concrete, membranes" },
+  "far-house": { roughness: 0.6, metalness: 0.05, note: "the far level's houses: walls and roof in one piece, coloured in it" },
   stone: { roughness: 0.85 },
   bronze: { roughness: 0.4, metalness: 0.9 },
   concrete: { roughness: 0.85 },
@@ -41,6 +45,6 @@ export const MATERIALS: Record<string, { roughness: number; metalness?: number; 
   gravel: { roughness: 0.95 },
   grass: { roughness: 0.95 },
   water: { roughness: 0.04, surface: { water: true }, note: "rivers, ponds, moats: a host may draw its own water" },
-  foliage: { roughness: 0.8, surface: { foliage: true } },
+  foliage: { doubleSided: true, roughness: 0.8, surface: { foliage: true } },
   bark: { roughness: 0.9 },
 };

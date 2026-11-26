@@ -4,7 +4,7 @@
 import earcut from "earcut";
 import type { V3 } from "../earthrt/core/geo.ts";
 import { lin, type RGB } from "./mesh.ts";
-import { hash01, rng, tileToPlane, type P2 } from "./plane.ts";
+import { area as ringArea, hash01, rng, tileToPlane, type P2 } from "./plane.ts";
 import { GROUND_ZOOM } from "./ground.ts";
 import type { Feature, Line, World } from "./world.ts";
 
@@ -24,6 +24,7 @@ export function drapePolygon(w: World, rings: P2[][], material: string, col: RGB
 }
 
 function drapeTri(w: World, a: P2, b: P2, c: P2, material: string, col: RGB, lift: number) {
+  if (w.lod) { looseTri(w, a, b, c, material, col, lift, 0); return; }
   w.ground.drape(a, b, c, (poly) => {
     let sx = 0, sy = 0;
     for (const p of poly) { sx += p[0]; sy += p[1]; }
@@ -34,6 +35,24 @@ function drapeTri(w: World, a: P2, b: P2, c: P2, material: string, col: RGB, lif
     const uvs = poly.map((p) => { const q = tileToPlane(p[0] / CELLS, p[1] / CELLS, GROUND_ZOOM); return [q[0], q[1]] as [number, number]; });
     t.poly(material, pts, col, uvs, w.enuAt(px, py).u);
   });
+}
+
+/** The far level: a triangle split until its edges are under 60 m, its corners on the terrain and lifted a little
+ *  more (seen from kilometres away, a few decimetres off the ground do not show; the cut pieces would). */
+function looseTri(w: World, a: P2, b: P2, c: P2, material: string, col: RGB, lift: number, depth: number) {
+  const ab = Math.hypot(b[0] - a[0], b[1] - a[1]), bc = Math.hypot(c[0] - b[0], c[1] - b[1]), ca = Math.hypot(a[0] - c[0], a[1] - c[1]);
+  const m = Math.max(ab, bc, ca);
+  if (m > 60 && depth < 12) {
+    if (m === ab) { const d: P2 = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]; looseTri(w, a, d, c, material, col, lift, depth + 1); looseTri(w, d, b, c, material, col, lift, depth + 1); }
+    else if (m === bc) { const d: P2 = [(b[0] + c[0]) / 2, (b[1] + c[1]) / 2]; looseTri(w, a, b, d, material, col, lift, depth + 1); looseTri(w, a, d, c, material, col, lift, depth + 1); }
+    else { const d: P2 = [(c[0] + a[0]) / 2, (c[1] + a[1]) / 2]; looseTri(w, a, b, d, material, col, lift, depth + 1); looseTri(w, d, b, c, material, col, lift, depth + 1); }
+    return;
+  }
+  const px = (a[0] + b[0] + c[0]) / 3, py = (a[1] + b[1] + c[1]) / 3;
+  if (!w.inBounds(px, py)) return;
+  const t = w.tileAt(px, py);
+  const pts = [a, b, c].map((p) => { const g = w.ground.grid(p[0], p[1]); return w.ground.atGrid(g[0], g[1], lift + 0.6); });
+  t.poly(material, pts, col, undefined, w.enuAt(px, py).u);
 }
 
 // ------------------------------------------------------------------------------------------------ areas
@@ -77,6 +96,7 @@ export function buildAreas(w: World, areas: Feature[]) {
       const c = poly[0][0];
       const st = areaStyle(f.t, w, c[0], c[1]);
       if (!st) continue;
+      if (w.lod && Math.abs(ringArea(poly[0])) < 400) continue;
       drapePolygon(w, poly, st.material, st.col, st.lift);
       n++;
     }
@@ -162,7 +182,9 @@ export function buildLines(w: World, lines: Line[]) {
   for (const l of lines) {
     const t = l.t;
     if (underground(t)) continue;
-    if (t.barrier === "wall" || t.barrier === "city_wall") { wallLine(w, l); continue; }
+    if (t.barrier === "wall" || t.barrier === "city_wall") { if (!w.lod) wallLine(w, l); continue; }
+    if (w.lod && t.highway && ["service", "footway", "path", "cycleway", "track", "pedestrian", "living_street", "steps", "bridleway"].includes(t.highway)) continue;
+    if (w.lod && t.waterway && ["ditch", "drain", "stream"].includes(t.waterway)) continue;
     let hw: number | null = null, col: RGB = [0, 0, 0], lift = 0.3, material = "asphalt";
     if (t.highway) {
       if (t.highway === "steps" || t.highway === "proposed" || t.highway === "construction" || t.highway === "elevator") continue;
@@ -186,7 +208,7 @@ export function buildLines(w: World, lines: Line[]) {
 
     const bridge = t.bridge && t.bridge !== "no";
     if (bridge && (t.highway || t.railway)) { deck(w, l, hw, col, material, bridgeEnds, ek); continue; }
-    ribbon(w, l.pts, hw, material, col, lift);
+    ribbon(w, l.pts, w.lod ? hw * 1.15 : hw, material, col, lift);
   }
 }
 
@@ -203,7 +225,7 @@ function ribbon(w: World, pts: P2[], hw: number, material: string, col: RGB, lif
     drapeTri(w, q[0], q[2], q[3], material, c, lift);
   }
   // joins: an octagon at every inner vertex (and the ends, for wide roads)
-  if (hw < 1.2) return;
+  if (hw < 1.2 || w.lod) return;
   for (let i = 1; i + 1 < pts.length; i++) {
     const p = pts[i];
     const o: P2[] = Array.from({ length: 8 }, (_, k) => [p[0] + Math.cos((k * Math.PI) / 4) * hw * 1.04, p[1] + Math.sin((k * Math.PI) / 4) * hw * 1.04]);

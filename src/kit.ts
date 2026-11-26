@@ -6,7 +6,7 @@ import { encodeErt } from "../earthrt/core/ert.ts";
 import type { V3 } from "../earthrt/core/geo.ts";
 import { newell } from "./mesh.ts";
 
-export interface Piece { name: string; material: string; pos: number[]; nrm: number[]; idx: number[]; smooth?: boolean }
+export interface Piece { name: string; material: string; pos: number[]; nrm: number[]; idx: number[]; smooth?: boolean; /** linear vertex colours (the far level's houses) */ col?: number[] }
 
 const pieces: Piece[] = [];
 function piece(name: string, material: string): Piece {
@@ -87,6 +87,38 @@ for (const p of pieces.slice()) {
   if (p.material !== "roof-tile") continue;
   for (const m of ["roof-metal", "roof-copper", "roof-bark"]) pieces.push({ ...p, name: `${p.name}:${m}`, material: m });
 }
+
+// the far level's houses: walls and roof in one copy (walls y 0..1, the roof from y = 1 to 1 + k), coloured in the
+// piece (light walls, dark roof) and tinted by the copy's colour
+export const HOUSE_K = [0.15, 0.25, 0.4, 0.6, 0.9, 1.3];
+const FAR_WALL = [0.62, 0.58, 0.5], FAR_ROOF = [0.075, 0.08, 0.088];
+function farHouse(name: string, k: number, hip: number | null) {
+  const p = piece(name, "far-house");
+  p.col = [];
+  const add = (pts: V3[], c: number[]) => { const b = p.pos.length / 3; quad(p, pts); for (let i = 0; i < pts.length; i++) p.col!.push(...c); void b; };
+  add([[-0.5, 0, 0.5], [0.5, 0, 0.5], [0.5, 1, 0.5], [-0.5, 1, 0.5]], FAR_WALL);
+  add([[0.5, 0, -0.5], [-0.5, 0, -0.5], [-0.5, 1, -0.5], [0.5, 1, -0.5]], FAR_WALL);
+  add([[0.5, 0, 0.5], [0.5, 0, -0.5], [0.5, 1, -0.5], [0.5, 1, 0.5]], FAR_WALL);
+  add([[-0.5, 0, -0.5], [-0.5, 0, 0.5], [-0.5, 1, 0.5], [-0.5, 1, -0.5]], FAR_WALL);
+  const t = 1 + k;
+  if (hip === null) {
+    add([[-O, 1, O], [O, 1, O], [O, t, 0], [-O, t, 0]], FAR_ROOF);
+    add([[O, 1, -O], [-O, 1, -O], [-O, t, 0], [O, t, 0]], FAR_ROOF);
+    add([[0.5, 1, 0.5], [0.5, 1, -0.5], [0.5, t, 0]], FAR_WALL);
+    add([[-0.5, 1, -0.5], [-0.5, 1, 0.5], [-0.5, t, 0]], FAR_WALL);
+  } else {
+    const r = hip;
+    add([[-O, 1, O], [O, 1, O], [r, t, 0], [-r, t, 0]], FAR_ROOF);
+    add([[O, 1, -O], [-O, 1, -O], [-r, t, 0], [r, t, 0]], FAR_ROOF);
+    add([[O, 1, O], [O, 1, -O], [r, t, 0]], FAR_ROOF);
+    add([[-O, 1, -O], [-O, 1, O], [-r, t, 0]], FAR_ROOF);
+  }
+}
+for (const k of HOUSE_K) {
+  farHouse(`house-gable-${k}`, k, null);
+  for (const r of HIPS) farHouse(`house-hip-${r}-${k}`, k, r);
+}
+export const FAR_ROOF_LINEAR = FAR_ROOF;
 
 // ------------------------------------------------------------------------------------------------ trees
 // A 1 m tree: crown and trunk as two pieces (two materials). Smooth normals on crowns.

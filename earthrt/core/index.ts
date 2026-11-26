@@ -9,3 +9,4 @@ export * from "./flight.ts";
 export * from "./sun.ts";
 export * from "./places.ts";
 export * from "./origin.ts";
+export * from "./tileset.ts";

@@ -4,9 +4,10 @@
 import earcut from "earcut";
 import { cross, type V3 } from "../earthrt/core/geo.ts";
 import { lin, type RGB, type TileMesh } from "./mesh.ts";
-import { HIPS } from "./kit.ts";
+import { FAR_ROOF_LINEAR, HIPS, HOUSE_K } from "./kit.ts";
 import { area, centroid, cleanRing, hash01, inset, obb, pointInRing, rng, toPlane, type Obb, type P2 } from "./plane.ts";
-import { jitter, mix, type Feature, type World } from "./world.ts";
+import { Grid, jitter, mix, type Feature, type World } from "./world.ts";
+import { CONCRETE, STEEL, WOODEN, type PlateauBuilding } from "./plateau.ts";
 
 // ------------------------------------------------------------------------------------------------ palettes (sRGB)
 
@@ -78,6 +79,54 @@ function kindOf(t: Record<string, string>, precinct: { religion: string } | null
   return dt > 0.2 ? "commercial" : "industrial";
 }
 
+/** A PLATEAU building's kind from its usage and structure (OSM's tags win where they say more). */
+function kindFromPlateau(pl: PlateauBuilding, a: number, x: number, y: number): Kind {
+  const u = pl.usage, wooden = WOODEN(pl.structure), low = !(pl.storeys > 2) && !(pl.h > 9.5);
+  if (u === "411" || u === "415" || u === "451") return wooden || low ? "house" : "apartments";
+  if (u === "413") return wooden || (low && a < 200) ? "house" : "commercial";
+  if (u === "412" || u === "414") return wooden && low ? "house" : "apartments";
+  if (u === "401" || u === "402" || u === "403" || u === "404") return wooden && low ? "house" : "commercial";
+  if (u === "421" || u === "422") return "civic";
+  if (u === "431" || u === "441" || u === "452") return a < 40 ? "shed" : "industrial";
+  // unknown: by structure and size
+  if (wooden) return a < 25 ? "shed" : "house";
+  if (CONCRETE(pl.structure)) return downtown(x, y) > 0.3 || a > 300 ? "commercial" : "apartments";
+  if (STEEL(pl.structure)) return a > 400 ? "industrial" : a < 30 ? "shed" : low ? "house" : "commercial";
+  return a < 25 ? "shed" : a < 160 && low ? "house" : "apartments";
+}
+
+/** A building's LOD2 surfaces as they are (its roofs and walls), on our ground. */
+function lod2Mesh(w: World, t: TileMesh, pl: PlateauBuilding, ground: number, base: number, wallMat: string, wallCol: RGB, roofMat: string, roofCol: RGB) {
+  const [cx, cy] = centroid(pl.rings[0]);
+  const up = w.enuAt(cx, cy).u;
+  for (const [k, raw] of pl.lod2!) {
+    const ring = raw.slice();
+    if (ring.length > 1) { const a = ring[0], b = ring[ring.length - 1]; if (a[0] === b[0] && a[1] === b[1] && a[2] === b[2]) ring.pop(); }
+    if (ring.length < 3) continue;
+    // Newell normal in the plane
+    let nx = 0, ny = 0, nz = 0;
+    for (let i = 0; i < ring.length; i++) {
+      const a = ring[i], b = ring[(i + 1) % ring.length];
+      nx += (a[1] - b[1]) * (a[2] + b[2]); ny += (a[2] - b[2]) * (a[0] + b[0]); nz += (a[0] - b[0]) * (a[1] + b[1]);
+    }
+    const ax = Math.abs(nx), ay = Math.abs(ny), az = Math.abs(nz);
+    if (ax + ay + az < 1e-6) continue;
+    const flat: number[] = [];
+    for (const p of ring) { if (az >= ax && az >= ay) flat.push(p[0], p[1]); else if (ax >= ay) flat.push(p[1], p[2]); else flat.push(p[0], p[2]); }
+    const tri = earcut(flat);
+    const roof = k === "R";
+    const pts = ring.map((p) => w.P(p[0], p[1], p[2] < 0.05 ? base : ground + p[2]));
+    // walls: u along the wall, v up (metres)
+    const hx = ax + ay > 1e-6 ? -ny / Math.hypot(nx, ny) : 1, hy = ax + ay > 1e-6 ? nx / Math.hypot(nx, ny) : 0;
+    const uvs = ring.map((p) => [p[0] * hx + p[1] * hy, Math.max(0, p[2])] as [number, number]);
+    for (let i = 0; i < tri.length; i += 3) {
+      const ids = [tri[i], tri[i + 1], tri[i + 2]];
+      if (roof) t.poly(roofMat, ids.map((j) => pts[j]), L(roofCol), undefined, up);
+      else t.poly(wallMat, ids.map((j) => pts[j]), L(wallCol), ids.map((j) => uvs[j]), nz > 0.5 * Math.hypot(nx, ny, nz) ? up : undefined);
+    }
+  }
+}
+
 // ------------------------------------------------------------------------------------------------ emitting
 
 /** The axes of a box in ECEF: X along `angle` (plane radians, from east toward north) × length, Y up × height,
@@ -95,22 +144,39 @@ interface BoxRoof { type: "gable" | "hip" | "flat" | "shed"; rise: number; mater
 /** A box house or block as copies: walls from `base` to `eaves`, then its roof (ridge along `angle`). */
 function boxBuilding(w: World, t: TileMesh, cx: number, cy: number, angle: number, length: number, width: number, base: number, eaves: number, wall: RGB, roof: BoxRoof, r: () => number) {
   const [X, Y, Z] = axes(w, cx, cy, angle, length, eaves - base, width);
+  // the far level: a pitched house is one copy (walls and roof), tinted by its roof's colour
+  if (w.lod && (roof.type === "gable" || roof.type === "hip")) {
+    const k0 = roof.rise / Math.max(1, eaves - base);
+    let k = HOUSE_K[0];
+    for (const v of HOUSE_K) if (Math.abs(v - k0) < Math.abs(k - k0)) k = v;
+    let name = `house-gable-${k}`;
+    if (roof.type === "hip") {
+      const want = Math.max(0, 0.5 - width / (2 * length));
+      let best = HIPS[0];
+      for (const h of HIPS) if (Math.abs(h - want) < Math.abs(best - want)) best = h;
+      name = `house-hip-${best}-${k}`;
+    }
+    const rc = L(roof.color);
+    const tint = rc.map((v, i) => Math.max(0.5, Math.min(2.2, v / FAR_ROOF_LINEAR[i]))) as RGB;
+    t.instance(name, X, Y, Z, w.P(cx, cy, base), tint);
+    return;
+  }
   t.instance("walls", X, Y, Z, w.P(cx, cy, base), L(wall));
   const T = w.P(cx, cy, eaves);
   const mat = roof.material === "roof-tile" ? "" : `:${roof.material}`;
   if (roof.type === "flat") {
     const [Xf, Yf, Zf] = axes(w, cx, cy, angle, length, 0.6 + r() * 0.5, width);
     t.instance("flat", Xf, Yf, Zf, w.P(cx, cy, eaves + 0.15), L(roof.color));
-    t.instance("parapet", Xf, Yf, Zf, T, L(wall));
+    if (!w.lod) t.instance("parapet", Xf, Yf, Zf, T, L(wall));
     return;
   }
   const [Xr, Yr, Zr] = axes(w, cx, cy, angle, length, roof.rise, width);
   if (roof.type === "gable") {
     t.instance(`gable${mat}`, Xr, Yr, Zr, T, L(roof.color));
-    t.instance("gable-ends", Xr, Yr, Zr, T, L(wall));
+    if (!w.lod) t.instance("gable-ends", Xr, Yr, Zr, T, L(wall));
   } else if (roof.type === "shed") {
     t.instance(`shed`, Xr, Yr, Zr, T, L(roof.color));
-    t.instance("shed-ends", Xr, Yr, Zr, T, L(wall));
+    if (!w.lod) t.instance("shed-ends", Xr, Yr, Zr, T, L(wall));
   } else {
     const want = Math.max(0, 0.5 - width / (2 * length));
     let best = HIPS[0];
@@ -167,6 +233,7 @@ function insetRoof(w: World, t: TileMesh, ring: P2[], eaves: number, pitch: numb
 
 /** Plant rooms and tanks on a flat roof: kit boxes inside the footprint. */
 function rooftop(w: World, t: TileMesh, ring: P2[], o: Obb, top: number, a: number, r: () => number, wallCol: RGB) {
+  if (w.lod) return;
   const n = a < 200 ? (r() < 0.6 ? 1 : 0) : a < 800 ? 1 + Math.floor(r() * 2) : 2 + Math.floor(r() * 3);
   const c = Math.cos(o.angle), s = Math.sin(o.angle);
   for (let k = 0; k < n; k++) {
@@ -317,39 +384,61 @@ function kyotoTower(w: World, t: TileMesh, cx: number, cy: number, base: number)
 
 // ------------------------------------------------------------------------------------------------ the pass
 
-export function buildBuildings(w: World, features: Feature[]) {
-  // building parts: an outline mostly covered by parts is drawn as its parts
-  const parts = features.filter((f) => f.t["building:part"] && f.t["building:part"] !== "no");
-  const partCentroids = parts.map((p) => centroid(p.rings[0][0]));
+export function buildBuildings(w: World, features: Feature[], plateau: PlateauBuilding[] = []) {
+  // OSM outlines, to give PLATEAU's buildings their tags (names, temples, shrines, pagodas) and to fill in where
+  // PLATEAU has nothing (outside Kyoto city)
+  type O = { f: Feature; poly: P2[][]; ring: P2[]; c: P2; used: boolean };
+  const osm: O[] = [];
+  const og = new Grid<O>(60);
   for (const f of features) {
-    if (f.t["building:part"] && !f.t.building) continue; // parts are drawn below when their outline is skipped
+    if (f.t["building:part"] && !f.t.building) continue;
     for (const poly of f.rings) {
       const ring = cleanRing(poly[0]);
       if (ring.length < 3) continue;
-      let partsArea = 0;
-      if (parts.length) for (let i = 0; i < parts.length; i++) if (pointInRing(partCentroids[i][0], partCentroids[i][1], ring)) partsArea += Math.abs(area(parts[i].rings[0][0]));
-      if (partsArea > 0.5 * Math.abs(area(ring))) {
-        for (let i = 0; i < parts.length; i++) if (pointInRing(partCentroids[i][0], partCentroids[i][1], ring)) for (const pp of parts[i].rings) one(w, parts[i], pp, f.t);
-        continue;
-      }
-      one(w, f, poly);
+      const o: O = { f, poly, ring, c: centroid(ring), used: false };
+      osm.push(o);
+      og.add(Math.min(...ring.map((p) => p[0])), Math.min(...ring.map((p) => p[1])), Math.max(...ring.map((p) => p[0])), Math.max(...ring.map((p) => p[1])), o);
     }
+  }
+  const pg = new Grid<PlateauBuilding>(60);
+  for (const pl of plateau) {
+    const r = pl.rings[0];
+    pg.add(Math.min(...r.map((p) => p[0])), Math.min(...r.map((p) => p[1])), Math.max(...r.map((p) => p[0])), Math.max(...r.map((p) => p[1])), pl);
+  }
+  for (const pl of plateau) {
+    const c = centroid(pl.rings[0]);
+    let tags: Record<string, string> | null = null, best = Infinity;
+    for (const o of og.near(c[0], c[1])) {
+      if (!pointInRing(c[0], c[1], o.ring)) continue;
+      o.used = true;
+      // the smallest outline holding it (a part before the whole)
+      const a = Math.abs(area(o.ring));
+      if (a < best) { best = a; tags = o.f.t; }
+    }
+    one(w, { id: pl.id, t: tags ?? { building: "yes" }, rings: [pl.rings] }, pl.rings, undefined, pl);
+  }
+  for (const o of osm) {
+    if (o.used) continue;
+    if (pg.near(o.c[0], o.c[1]).some((pl) => pointInRing(o.c[0], o.c[1], pl.rings[0]))) continue;
+    o.used = true;
+    one(w, o.f, o.poly);
   }
 }
 
-function one(w: World, f: Feature, poly: P2[][], parent?: Record<string, string>) {
+function one(w: World, f: Feature, poly: P2[][], parent?: Record<string, string>, pl?: PlateauBuilding) {
   const ring = cleanRing(poly[0]);
   if (ring.length < 3) return;
   const holes = poly.slice(1).map((h) => cleanRing(h, false)).filter((h) => h.length >= 3);
   const a = Math.abs(area(ring));
-  if (a < 6) return;
+  if (a < (w.lod ? 20 : 6)) return;
   const [cx, cy] = centroid(ring);
   if (!w.inBounds(cx, cy)) return;
   const t0 = { ...(parent ?? {}), ...f.t };
   if (t0.location === "underground" || Number(t0.layer) < 0) return;
   const r = rng(Math.floor(hash01(f.id + ring.length) * 4294967296));
   const precinct = w.precinctAt(cx, cy);
-  const kind = kindOf(t0, precinct, a, cx, cy);
+  let kind = kindOf(t0, precinct, a, cx, cy);
+  if (pl && (!t0.building || t0.building === "yes" || t0.building === "residential" || t0.building === "house" || t0.building === "apartments" || t0.building === "commercial" || t0.building === "retail") && ["house", "apartments", "commercial", "industrial", "civic", "shed"].includes(kind)) kind = kindFromPlateau(pl, a, cx, cy);
   const o = obb(ring);
   const fill = a / (o.length * o.width);
   const base = w.ground.lowest(ring) - 0.3;
@@ -358,7 +447,12 @@ function one(w: World, f: Feature, poly: P2[][], parent?: Record<string, string>
   w.footprints.add(Math.min(...ring.map((p) => p[0])), Math.min(...ring.map((p) => p[1])), Math.max(...ring.map((p) => p[0])), Math.max(...ring.map((p) => p[1])), ring);
   w.stats.buildings++;
 
-  const lv = num(t0["building:levels"]), tagH = num(t0.height), minH = num(t0.min_height);
+  let lv = num(t0["building:levels"]), tagH = num(t0.height);
+  const minH = num(t0.min_height);
+  if (pl) {
+    if (pl.h > 1.5 && pl.h < 300) tagH = pl.h;
+    if (!Number.isFinite(lv) && pl.storeys > 0) lv = pl.storeys;
+  }
   const roofShape = t0["roof:shape"];
   const dt = downtown(cx, cy);
   const rectish = fill > 0.86 && holes.length === 0;
@@ -478,11 +572,49 @@ function one(w: World, f: Feature, poly: P2[][], parent?: Record<string, string>
       w.stats.unique++;
       return;
   }
+  // ---- PLATEAU: the structure says pitched or flat where LOD2 does not; LOD2's roof where it does
+  const fit = pl?.fit;
+  if (pl) {
+    const wooden = WOODEN(pl.structure);
+    const old = pl.year < 1960;
+    if (fit && fit.form === "flat") roof = "flat";
+    else if (fit && (fit.form === "gable" || fit.form === "hip")) roof = fit.form;
+    else if (!fit && wooden && roof === "flat" && !(levels > 3)) roof = r() < 0.6 ? "gable" : "hip";
+    else if (!fit && CONCRETE(pl.structure) && roof !== "flat" && a > 80) roof = "flat";
+    const pitched = roof !== "flat";
+    if (pitched && FLAT_ROOF.includes(roofCol!)) {
+      roofCol = wooden ? (old || r() < 0.6 ? pick(KAWARA, r()) : pick(SLATE, r())) : STEEL(pl.structure) ? pick(METAL, r()) : pick(SLATE.concat(KAWARA), r());
+      roofMat = METAL.includes(roofCol) ? "roof-metal" : "roof-tile";
+      if (wooden) { wallCol = pick(HOUSE_WALL, r()); wallMat = "wall"; }
+    }
+    if (pitched && wooden && old && roofMat === "roof-tile" && !KAWARA.includes(roofCol!)) roofCol = pick(KAWARA, r());
+    if (pitched && wooden && old && inMachiyaArea(cx, cy) && r() < 0.6) wallCol = pick(MACHIYA_WALL, r());
+    if (!pitched && FLAT_ROOF.indexOf(roofCol!) < 0) { roofCol = pick(FLAT_ROOF, r()); roofMat = "roof-tile"; }
+  }
   const top = ground + H!;
   const bottom = Number.isFinite(minH) ? ground + minH : base;
 
+  // ---- LOD2 roofs too complex for the kit: the surfaces themselves
+  if (pl?.lod2 && fit && !w.lod && (fit.form === "complex" || ((fit.form === "gable" || fit.form === "hip") && !rectish))) {
+    lod2Mesh(w, t, pl, ground, base, wallMat, wallCol!, roof === "flat" ? "roof-flat" : roofMat, roofCol!);
+    w.stats.unique++;
+    return;
+  }
+  // ---- LOD2's gabled and hipped roofs on near-rectangles: kit copies along the real ridge, at the real heights
+  if (fit && (fit.form === "gable" || fit.form === "hip") && (rectish || w.lod)) {
+    const c = Math.cos(fit.ridge), s = Math.sin(fit.ridge);
+    let u0 = Infinity, u1 = -Infinity, v0 = Infinity, v1 = -Infinity;
+    for (const p of ring) { const u = p[0] * c + p[1] * s, v = -p[0] * s + p[1] * c; u0 = Math.min(u0, u); u1 = Math.max(u1, u); v0 = Math.min(v0, v); v1 = Math.max(v1, v); }
+    const mu = (u0 + u1) / 2, mv = (v0 + v1) / 2;
+    const eaves = Math.max(bottom + 2.2, ground + fit.eaves);
+    const rise = Math.max(0.4, Math.min(u1 - u0, v1 - v0, ground + fit.top - eaves));
+    boxBuilding(w, t, mu * c - mv * s, mu * s + mv * c, fit.ridge, u1 - u0, v1 - v0, bottom, eaves, wallCol!, { type: fit.form, rise, material: roofMat, color: roofCol! }, r);
+    w.stats.instanced++;
+    return;
+  }
+
   // ---- machiya: a deep narrow townhouse in the old town, its ridge along the street
-  if ((kind === "house" || kind === "machiya") && rectish && o.width < 9 && o.length / o.width > 1.6 && inMachiyaArea(cx, cy) && !roofShape && levels <= 2) {
+  if ((kind === "house" || kind === "machiya") && rectish && o.width < 9 && o.length / o.width > 1.6 && inMachiyaArea(cx, cy) && !roofShape && levels <= 2 && !fit) {
     const c = Math.cos(o.angle), s = Math.sin(o.angle);
     // which short end faces the street
     const endA: P2 = [o.cx + (c * o.length) / 2, o.cy + (s * o.length) / 2], endB: P2 = [o.cx - (c * o.length) / 2, o.cy - (s * o.length) / 2];
@@ -522,9 +654,9 @@ function one(w: World, f: Feature, poly: P2[][], parent?: Record<string, string>
   // ---- other shapes: meshes
   const all = [ring, ...holes];
   if (roof === "flat" || holes.length || a > 600) {
-    walls(w, t, all, bottom, top + 0.9, wallMat, wallCol!);
+    walls(w, t, all, bottom, top + (w.lod ? 0 : 0.9), wallMat, wallCol!);
     cap(w, t, all, top, "roof-flat", roofCol!);
-    const inner = inset(ring, 0.35);
+    const inner = w.lod ? null : inset(ring, 0.35);
     if (inner) {
       walls(w, t, [inner.slice().reverse()], top, top + 0.9, "wall", wallCol!);
       // the parapet's top

@@ -15,11 +15,13 @@ const CROWN: Record<Form, RGB[]> = {
 const TRUNK: RGB = [84, 68, 54];
 
 function plant(w: World, x: number, y: number, form: Form, h: number, r: () => number, tint = 0) {
+  // the far level: a third of them, larger
+  if (w.lod) { if (r() > 0.36) return; h *= 1.3; }
   const t = w.tileAt(x, y);
   const { e, n, u } = w.enuAt(x, y);
   const a = r() * Math.PI * 2, c = Math.cos(a) * h, s = Math.sin(a) * h;
   // pines lean
-  const lean = form === "pine" ? (r() - 0.5) * 0.35 : 0;
+  const lean = 0;
   const X: V3 = [e[0] * c + n[0] * s, e[1] * c + n[1] * s, e[2] * c + n[2] * s];
   const Z: V3 = [(-e[0] * s + n[0] * c), (-e[1] * s + n[1] * c), (-e[2] * s + n[2] * c)];
   // y = up, with the lean toward X
@@ -31,7 +33,7 @@ function plant(w: World, x: number, y: number, form: Form, h: number, r: () => n
   let col = jitter(CROWN[form][Math.floor(r() * CROWN[form].length)], 0.12, r);
   if (tint) col = [col[0] * (1 + tint), col[1] * (1 + tint * 0.6), col[2]];
   t.instance(`tree-${form}`, X, Y, Zr, T, lin(col));
-  t.instance(`trunk-${form}`, X, Y, Zr, T, lin(TRUNK));
+  if (!w.lod) t.instance(`trunk-${form}`, X, Y, Zr, T, lin(TRUNK));
   w.stats.trees++;
 }
 

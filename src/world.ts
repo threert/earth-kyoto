@@ -1,7 +1,7 @@
 // What every part of the generator shares: the OSM data in the plane, spatial lookups, the tiles being filled, and
 // the map from the plane (+ height) to ECEF.
-import { geodeticToEcef, enu, type V3 } from "../earthrt/core/geo.ts";
-import { tileCenter, keyOf } from "../earthrt/core/tiles.ts";
+import { geodeticToEcef, enu, type Frame, type V3 } from "../earthrt/core/geo.ts";
+import { keyOf } from "../earthrt/core/tiles.ts";
 import { Ground } from "./ground.ts";
 import { TileMesh, type RGB } from "./mesh.ts";
 import { fromPlane, planeToTile, pointInRing, toPlane, type P2 } from "./plane.ts";
@@ -34,7 +34,6 @@ export class Grid<T> {
   }
 }
 
-export const TILE_ZOOM = 15;
 
 export class World {
   tiles = new Map<string, TileMesh>();
@@ -49,19 +48,19 @@ export class World {
   precinctGrid = new Grid<{ rings: P2[][]; religion: string; name?: string }>(100);
   stats = { buildings: 0, instanced: 0, unique: 0, temples: 0, shrines: 0, pagodas: 0, trees: 0, skipped: 0 };
 
-  constructor(public ground: Ground, bounds: [number, number][]) {
+  /** 0: the detailed level (z15 tiles); 1: the far level (z13 tiles: no small roads, fewer trees, no rooftop plant) */
+  constructor(public ground: Ground, bounds: [number, number][], public frame: Frame, public zoom = 15, public lod = 0) {
     this.boundsRing = bounds.map(([lat, lon]) => toPlane(lat, lon));
   }
 
   inBounds(x: number, y: number) { return pointInRing(x, y, this.boundsRing); }
 
-  /** The z15 tile holding a plane point (made on first use). */
+  /** The tile (of this level's zoom) holding a plane point (made on first use). */
   tileAt(x: number, y: number): TileMesh {
-    const [tx, ty] = planeToTile(x, y, TILE_ZOOM);
-    const k = { z: TILE_ZOOM, x: Math.floor(tx), y: Math.floor(ty) };
-    const key = keyOf(k);
+    const [tx, ty] = planeToTile(x, y, this.zoom);
+    const key = keyOf({ z: this.zoom, x: Math.floor(tx), y: Math.floor(ty) });
     let t = this.tiles.get(key);
-    if (!t) this.tiles.set(key, (t = new TileMesh(key, tileCenter(k))));
+    if (!t) this.tiles.set(key, (t = new TileMesh(key, this.frame)));
     return t;
   }
 

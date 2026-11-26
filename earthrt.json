@@ -1,0 +1,126 @@
+{
+  "format": "earthrt/place@1",
+  "id": "kyoto",
+  "title": "Kyoto",
+  "summary": "The city in its basin: machiya and kawara roofs, temples and pagodas, the Kamo and the grid, from OSM and PLATEAU.",
+  "kind": "city",
+  "topic": "city:kyoto",
+  "anchor": {
+    "lat": 35,
+    "lon": 135.76,
+    "height": 0,
+    "heightRef": "ellipsoid",
+    "heading": 0
+  },
+  "bounds": {
+    "polygon": [
+      [
+        35.069,
+        135.735
+      ],
+      [
+        35.06,
+        135.724
+      ],
+      [
+        35.046,
+        135.714
+      ],
+      [
+        35.036,
+        135.696
+      ],
+      [
+        35.022,
+        135.67
+      ],
+      [
+        34.996,
+        135.664
+      ],
+      [
+        34.96,
+        135.674
+      ],
+      [
+        34.93,
+        135.69
+      ],
+      [
+        34.915,
+        135.725
+      ],
+      [
+        34.915,
+        135.775
+      ],
+      [
+        34.935,
+        135.79
+      ],
+      [
+        34.955,
+        135.786
+      ],
+      [
+        34.975,
+        135.786
+      ],
+      [
+        34.993,
+        135.793
+      ],
+      [
+        35.01,
+        135.801
+      ],
+      [
+        35.028,
+        135.806
+      ],
+      [
+        35.045,
+        135.806
+      ],
+      [
+        35.06,
+        135.796
+      ],
+      [
+        35.067,
+        135.776
+      ]
+    ]
+  },
+  "visibleFrom": 40000,
+  "enterFrom": 300,
+  "replaces": [
+    "buildings"
+  ],
+  "minDistance": 1,
+  "content": [
+    {
+      "type": "tiles",
+      "uri": "tileset.json"
+    }
+  ],
+  "start": {
+    "position": [
+      600,
+      900,
+      1500
+    ],
+    "target": [
+      900,
+      0,
+      -700
+    ]
+  },
+  "license": "ODbL-1.0",
+  "credits": [
+    "© OpenStreetMap contributors (ODbL)",
+    "3D city model: Project PLATEAU, MLIT Japan (Kyoto city, 2025)",
+    "Terrain: EarthRT trunk (GSI, Mapzen Terrain Tiles)",
+    "Generator: threert/earth-kyoto (MIT)"
+  ]
+}
