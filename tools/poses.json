@@ -1,0 +1,45 @@
+{
+ "about": "Kyoto's poses (EarthRT tools/poses.json) and closer ones of this place's own.",
+ "poses": [
+  {
+   "name": "kyoto-3km",
+   "lat": 34.955,
+   "lon": 135.76,
+   "alt": 3000,
+   "heading": 0,
+   "pitch": -25,
+   "time": 15,
+   "what": "Kyoto from the south: the basin, the city, the hills around it"
+  },
+  {
+   "name": "kyoto-1km",
+   "lat": 34.99,
+   "lon": 135.765,
+   "alt": 900,
+   "heading": 20,
+   "pitch": -30,
+   "time": 16,
+   "what": "central Kyoto, aeroplane-window close: buildings must read"
+  },
+  {
+   "name": "kyoto-gion-400m",
+   "lat": 34.9955,
+   "lon": 135.7745,
+   "alt": 420,
+   "heading": 60,
+   "pitch": -28,
+   "time": 16,
+   "what": "Gion to Yasaka pagoda and Kiyomizu: roofs, temples, the hill"
+  },
+  {
+   "name": "kyoto-toji-300m",
+   "lat": 34.9775,
+   "lon": 135.7445,
+   "alt": 330,
+   "heading": 60,
+   "pitch": -30,
+   "time": 15,
+   "what": "T\u014d-ji's pagoda and halls, the station beyond"
+  }
+ ]
+}

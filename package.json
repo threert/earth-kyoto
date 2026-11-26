@@ -1,0 +1,17 @@
+{
+  "name": "earth-kyoto",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "description": "Kyoto for EarthRT: a city place generated from open data (OSM, PLATEAU) on the trunk's terrain.",
+  "scripts": {
+    "fetch": "bash tools/fetch.sh",
+    "extract": ".venv/bin/python -I tools/extract.py data/raw/kyoto.osm.pbf data/osm.json",
+    "build": "bun src/build.ts",
+    "preview": "bun tools/preview.ts",
+    "register": "bun tools/register.ts"
+  },
+  "dependencies": {
+    "earcut": "^3.0.1"
+  }
+}
