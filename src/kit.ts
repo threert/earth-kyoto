@@ -203,7 +203,8 @@ export function encodeKit(): Uint8Array {
     chunks[`p${i}.pos`] = Float32Array.from(p.pos);
     chunks[`p${i}.nrm`] = Float32Array.from(p.nrm);
     chunks[`p${i}.idx`] = Uint32Array.from(p.idx);
-    return { name: p.name, material: p.material, chunk: `p${i}`, v: p.pos.length / 3, t: p.idx.length / 3 };
+    if (p.col) chunks[`p${i}.col`] = Float32Array.from(p.col);
+    return { name: p.name, material: p.material, chunk: `p${i}`, v: p.pos.length / 3, t: p.idx.length / 3, col: !!p.col };
   });
   return encodeErt({ v: 1, layer: "kit", key: "kit", enc: "expanded", center: [0, 0, 0], radius: 1, pieces: list }, chunks);
 }

@@ -16,7 +16,7 @@ interface Config {
   sun: V3;
   terrain: string[];
   buildings: string[];
-  city: { kit: string; tiles: string[]; materials: Record<string, { roughness: number; metalness?: number }> } | null;
+  city: { kit: string; tiles: string[]; materials: Record<string, { roughness: number; metalness?: number }>; anchor: { lat: number; lon: number } } | null;
   exposure: number | null;
 }
 
@@ -72,6 +72,10 @@ export default function build() {
   if (cfg.city) {
     // materials: one with vertex colours (meshes), one without (copies: the copy's colour)
     const mats = new Map<string, Material>();
+    // the tiles are in the place's frame: one transform for all
+    const pf = new Frame(cfg.city.anchor.lat, cfg.city.anchor.lon, 0, 0);
+    const pp = frame.point(pf.origin), pq = frame.quatOf(pf);
+    const placeCity = (o: { position: { set(x: number, y: number, z: number): void }; quaternion: { set(x: number, y: number, z: number, w: number): void } }) => { o.position.set(pp[0], pp[1], pp[2]); o.quaternion.set(pq[0], pq[1], pq[2], pq[3]); };
     const mat = (name: string, inst: boolean) => {
       const k = name + (inst ? "#i" : "");
       let m = mats.get(k);
@@ -83,13 +87,14 @@ export default function build() {
       return m;
     };
     const kit = decodeErt(readAsset(cfg.city.kit));
-    const pieces = new Map<string, { g: BufferGeometry; material: string }>();
-    for (const p of kit.header.pieces as { name: string; material: string; chunk: string }[]) {
+    const pieces = new Map<string, { g: BufferGeometry; material: string; col: boolean }>();
+    for (const p of kit.header.pieces as { name: string; material: string; chunk: string; col?: boolean }[]) {
       const g = new BufferGeometry();
       g.positions = kit.chunks[`${p.chunk}.pos`] as Float32Array;
       g.normals = kit.chunks[`${p.chunk}.nrm`] as Float32Array;
       g.index = kit.chunks[`${p.chunk}.idx`] as Uint32Array;
-      pieces.set(p.name, { g, material: p.material });
+      if (p.col) g.setAttribute("color", new BufferAttribute(kit.chunks[`${p.chunk}.col`] as Float32Array, 3));
+      pieces.set(p.name, { g, material: p.material, col: !!p.col });
     }
     for (const path of cfg.city.tiles) {
       const e = decodeErt(readAsset(path));
@@ -102,14 +107,14 @@ export default function build() {
         g.setAttribute("color", new BufferAttribute(e.chunks[`${m.chunk}.col`] as Float32Array, 3));
         g.index = e.chunks[`${m.chunk}.idx`] as Uint32Array;
         const mesh = new Mesh(g, mat(m.material, false));
-        place(mesh, h.center);
+        placeCity(mesh);
         scene.add(mesh);
       }
       for (const i of h.instances) {
         const p = pieces.get(i.piece);
         if (!p) continue;
         const src = e.chunks[`${i.chunk}.m`] as Float32Array;
-        const inst = new InstancedMesh(p.g, mat(p.material, true), i.n);
+        const inst = new InstancedMesh(p.g, mat(p.material, !p.col), i.n);
         const m16 = new Float32Array(i.n * 16);
         for (let k = 0; k < i.n; k++) {
           const a = k * 12, o = k * 16;
@@ -120,7 +125,7 @@ export default function build() {
         }
         inst.instanceMatrix.array.set(m16);
         inst.instanceColor = new InstancedBufferAttribute(new Float32Array(e.chunks[`${i.chunk}.col`] as Float32Array), 3);
-        place(inst, h.center);
+        placeCity(inst);
         scene.add(inst);
       }
     }

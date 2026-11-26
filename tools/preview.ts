@@ -9,7 +9,10 @@ import { decodeErt, encodeErt } from "../earthrt/core/ert.ts";
 import { ecefToGeodetic, Frame, geodeticToEcef, type V3 } from "../earthrt/core/geo.ts";
 import { keyOf, tileCenter, tileSize, tilesInBox, children, type TileKey } from "../earthrt/core/tiles.ts";
 import { sunDirection, solarTime } from "../earthrt/core/sun.ts";
-import { BOUNDS, MATERIALS, terrainGen } from "../src/config.ts";
+import { ANCHOR, BOUNDS, MATERIALS, terrainGen } from "../src/config.ts";
+import { encodeKit } from "../src/kit.ts";
+import { selectCityTiles } from "../earthrt/core/tileset.ts";
+import { glbToErt } from "./preview/glb2ert.ts";
 import { pointInRing, toPlane } from "../src/plane.ts";
 
 const root = resolve(import.meta.dir, "..");
@@ -138,13 +141,17 @@ for (const pose of jobs) {
   // the city's tiles within 20 km, ahead
   const ts = JSON.parse(readFileSync(join(tilesDir, "tileset.json"), "utf8"));
   const city: string[] = [];
-  for (const t of ts.list as { key: string; center: V3 }[]) {
-    const c = t.center, d = Math.hypot(c[0] - cam[0], c[1] - cam[1], c[2] - cam[2]);
-    const ahead = (c[0] - cam[0]) * fwd[0] + (c[1] - cam[1]) * fwd[1] + (c[2] - cam[2]) * fwd[2];
-    if (d > 20000 || ahead < -1500) continue;
-    city.push(link(`city/${t.key}.ert`, join(tilesDir, `tiles/${t.key}.ert`)));
+  // as a host picks them: by screen-space error from the roots (core selectCityTiles), in the place's frame
+  const pf = new Frame(ANCHOR.lat, ANCHOR.lon, 0, 0);
+  const camP = pf.point(cam), fwdP = pf.dir(fwd);
+  const sel = selectCityTiles(ts, { position: camP as V3, fov: (FOV * Math.PI) / 180, height: H, sse: 2, visible: (c, r) => (c[0] - camP[0]) * fwdP[0] + (c[1] - camP[1]) * fwdP[1] + (c[2] - camP[2]) * fwdP[2] > -r });
+  for (const t of sel.show) {
+    const rel = `city/${ts.stats ? "" : ""}${t.key}.ert`, dst = join(assets, rel);
+    mkdirSync(dirname(dst), { recursive: true });
+    writeFileSync(dst, glbToErt(readFileSync(join(tilesDir, t.uri)), t.key));
+    city.push(rel);
   }
-  copyFileSync(join(tilesDir, "kit.ert"), join(assets, "city/kit.ert"));
+  writeFileSync(join(assets, "city/kit.ert"), encodeKit());
   const utc = solarTime(Date.UTC(2026, 5, 21), pose.lon, pose.time ?? 15);
   const sun = frame.dir(sunDirection(utc));
   const ground = 50;
@@ -157,7 +164,7 @@ for (const pose of jobs) {
       sun,
       terrain: tFiles,
       buildings: mode === "before" ? bFiles : cut,
-      city: mode === "after" ? { kit: "city/kit.ert", tiles: city, materials: MATERIALS } : null,
+      city: mode === "after" ? { kit: "city/kit.ert", tiles: city, materials: MATERIALS, anchor: ANCHOR } : null,
       exposure: null,
     };
     writeFileSync(join(assets, "preview.json"), JSON.stringify(cfg));
